@@ -26,11 +26,15 @@ int main(void){
 	print_prompt();
 	while (fgets(line, LINE_MAX, stdin)) {
 		if(*line == '\n'){
+			print_prompt();
 			continue;
 		}
 		parse_object catch = {0};
 	
 		catch = parse_token(line);
+		if(strcmp(catch.command, "cd") == 0){
+			chdir(catch.args[1]);
+		}
 		int j = find_cmd(&catch);
 
 		pid_t pid;
