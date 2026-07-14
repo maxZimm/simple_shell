@@ -33,7 +33,8 @@ int main(void){
 	
 		catch = parse_token(line);
 		if(strcmp(catch.command, "cd") == 0){
-			chdir(catch.args[1]);
+			char *target = catch.args[1] ? catch.args[1] : getenv("HOME");
+			chdir(target);
 		}
 		int j = find_cmd(&catch);
 
