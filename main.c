@@ -9,11 +9,14 @@
 
 #define HIST_MAX 5
 
+enum cmd_type {BUILT_IN, SYSTEM};
+
 typedef struct{
 	char *cmd_path;
 	char *command;
 	char *args[20];
 	int num_args;
+	enum cmd_type c_type;
 } parse_object;
 
 
@@ -25,11 +28,17 @@ parse_object *pop_cmd(void);
 void print_hist(void);
 
 parse_object *parse_token(char *);
-int find_cmd(parse_object *);
+void find_cmd(parse_object *);
 void del_po(parse_object *);
+void handle_builtin(parse_object *);
+void handle_system(parse_object *);
+void copy_po(parse_object *, parse_object *);
+
 void print_prompt(void);
 
+
 int main(void){
+	// FOR DEBUG DELETE LATER
 	// int gdb = 1;
 	// while (gdb) {
 	//
@@ -46,37 +55,14 @@ int main(void){
 		parse_object *catch;
 	
 		catch = parse_token(line);
+		find_cmd(catch);
 
-		// Builtin commands ------------------------------------------------------>
-		if(strcmp(catch->command, "cd") == 0){
-			char *target = catch->args[1] ? catch->args[1] : getenv("HOME");
-			chdir(target);
+		if(catch->c_type == SYSTEM){
+			handle_system(catch);
 		}
-		else if(strcmp(catch->command, "hist")	== 0){
-			print_hist();
-		}		
-		else if(strcmp(catch->command, "exit") == 0){
-			exit(EXIT_SUCCESS);
+		else {
+			handle_builtin(catch);
 		}
-		// Builtin commands <------------------------------------------------------
-
-		int j = find_cmd(catch);
-
-		pid_t pid;
-
-		if(j){
-			pid = fork();
-			if(pid == 0){
-				execvp(catch->cmd_path, catch->args);
-			}
-			else{
-				int status;
-				waitpid(pid, &status, 0);
-			}
-			//del_po(catch);
-			push_cmd(catch);
-		}
-		//fgets(line, LINE_MAX, stdin);
 		print_prompt();
 	}
 }
@@ -122,7 +108,7 @@ parse_object *parse_token(char *line){
 	return output;
 }
 
-int find_cmd(parse_object *po){
+void find_cmd(parse_object *po){
 	char *path_org;
 	char *path;
 	char *tokn;
@@ -147,7 +133,13 @@ int find_cmd(parse_object *po){
 
 	}
 	free(path);
-	return found;
+	if(found){
+		po->c_type = SYSTEM;
+	}
+	else {
+		po->c_type = BUILT_IN;
+		po->cmd_path = strdup("");
+	}
 }
 
 void del_po(parse_object *po){
@@ -201,5 +193,75 @@ void print_hist(void){
 			}
 			printf("\n");
 		}
+	}
+}
+
+void handle_builtin(parse_object *po){
+
+	if(strcmp(po->command, "cd") == 0){
+		char *target = po->args[1] ? po->args[1] : getenv("HOME");
+		chdir(target);
+	}
+	else if(strcmp(po->command, "hist") == 0){
+		print_hist();
+		del_po(po);
+		return;
+	}		
+	else if(strcmp(po->command, "exit") == 0){
+		exit(EXIT_SUCCESS);
+	}
+	else if(po->command[0] == '!'){
+		int hist_id = atoi(&po->command[1]);	
+		if(hist_id <= HIST_MAX && (last_cmd - hist_id) >= 0 ){
+			parse_object *hst_po = malloc(sizeof(parse_object));
+			copy_po(hst_po, command_history[last_cmd - hist_id]);
+			if(hst_po->c_type == BUILT_IN){
+				handle_builtin(hst_po);
+			}
+			else if(hst_po->c_type == SYSTEM){
+				handle_system(hst_po);
+			}
+			else{
+				printf("error unknown command\n");
+			}
+		}
+		else{
+			printf("No command at %d history\n", hist_id);
+		}
+		return;
+	}
+	push_cmd(po);
+}
+
+void handle_system(parse_object *po){
+		pid_t pid;
+
+		pid = fork();
+		if(pid == 0){
+			execvp(po->cmd_path, po->args);
+		}
+		else{
+			int status;
+			waitpid(pid, &status, 0);
+		}
+		push_cmd(po);
+}
+
+void copy_po(parse_object *dest, parse_object *src){
+	dest->cmd_path = strdup(src->cmd_path);
+	dest->command = strdup(src->command);
+
+	int i;
+	for(i = 0; i < src->num_args; i++){
+		dest->args[i] = strdup(src->args[i]);
+	}
+	dest->args[++i] = NULL;
+	dest->num_args = src->num_args;
+
+	if(src->c_type == SYSTEM){
+		dest->c_type = SYSTEM;
+	}
+	else {
+		dest->c_type = BUILT_IN;
 	}
 }
