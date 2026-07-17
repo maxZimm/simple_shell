@@ -247,12 +247,17 @@ void handle_system(parse_object *po){
 
 	pid = fork();
 	if(pid == 0){
-		int fd;
+		int fdo, fdi;
 		if(po->out_redir != NULL){
-			fd = open(po->out_redir, O_WRONLY | O_CREAT | O_APPEND, 0644);
+			fdo = open(po->out_redir, O_WRONLY | O_CREAT | O_APPEND, 0644);
+			dup2(fdo, STDOUT_FILENO);
+			close(fdo);
 		}
-		dup2(fd, STDOUT_FILENO);
-		close(fd);
+		if(po->in_redir != NULL){
+			fdi = open(po->in_redir, O_RDONLY);
+			dup2(fdi, STDIN_FILENO);
+			close(fdi);
+		}
 		execvp(po->cmd_path, po->args);
 		fflush(stdout);
 		perror("exec failed");
@@ -268,6 +273,7 @@ void copy_po(parse_object *dest, parse_object *src){
 	dest->cmd_path = strdup(src->cmd_path);
 	dest->command = strdup(src->command);
 
+	//Copy args array
 	int i;
 	for(i = 0; i < src->num_args; i++){
 		dest->args[i] = strdup(src->args[i]);
@@ -275,11 +281,20 @@ void copy_po(parse_object *dest, parse_object *src){
 	dest->args[++i] = NULL;
 	dest->num_args = src->num_args;
 
+	// Define type
 	if(src->c_type == SYSTEM){
 		dest->c_type = SYSTEM;
 	}
 	else {
 		dest->c_type = BUILT_IN;
+	}
+
+	//If redirects are present copy them.
+	if(src->out_redir != NULL){
+		dest->out_redir = strdup(src->out_redir);
+	}
+	if(src->in_redir != NULL){
+		dest->in_redir = strdup(src->in_redir);
 	}
 }
 
@@ -333,10 +348,10 @@ void define_redir(parse_object *po){
 		}
 	}
 
-	if(out_i > in_i && out_i > 0){
-		po->num_args = out_i;
-	}
-	else if(in_i > out_i && in_i > 0){
+	if(in_i > 0){
 		po->num_args = in_i;
+	}
+	else if(out_i > 0){
+		po->num_args = out_i;
 	}
 }
