@@ -6,6 +6,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <fcntl.h>
 
 #define HIST_MAX 5
 
@@ -15,6 +16,8 @@ typedef struct{
 	char *cmd_path;
 	char *command;
 	char *args[20];
+	char *out_redir;
+	char *in_redir;
 	int num_args;
 	enum cmd_type c_type;
 } parse_object;
@@ -33,6 +36,7 @@ void del_po(parse_object *);
 void handle_builtin(parse_object *);
 void handle_system(parse_object *);
 void copy_po(parse_object *, parse_object *);
+void define_redir(parse_object *);
 
 void print_prompt(void);
 
@@ -72,8 +76,8 @@ parse_object *parse_token(char *line){
 	int index = 0;
 	int count = 0;
 
-	
-	parse_object *output = malloc(sizeof(parse_object));
+	// Used calloc to set all members to 0 on creation	
+	parse_object *output = calloc(1, sizeof(parse_object));
 
 	cursor = line;
 	while (*line != '\0') {
@@ -105,6 +109,8 @@ parse_object *parse_token(char *line){
 
 	output->num_args = count;
 	output->args[count] = NULL;
+	// send to a function to determine redirect? 
+	define_redir(output);
 	return output;
 }
 
@@ -212,6 +218,9 @@ void handle_builtin(parse_object *po){
 	}
 	else if(po->command[0] == '!'){
 		int hist_id = atoi(&po->command[1]);	
+		if(hist_id == 0){
+			return; // failed to convert
+		}
 		if(hist_id <= HIST_MAX && (last_cmd - hist_id) >= 0 ){
 			parse_object *hst_po = malloc(sizeof(parse_object));
 			copy_po(hst_po, command_history[last_cmd - hist_id]);
@@ -234,17 +243,25 @@ void handle_builtin(parse_object *po){
 }
 
 void handle_system(parse_object *po){
-		pid_t pid;
+	pid_t pid;
 
-		pid = fork();
-		if(pid == 0){
-			execvp(po->cmd_path, po->args);
+	pid = fork();
+	if(pid == 0){
+		int fd;
+		if(po->out_redir != NULL){
+			fd = open(po->out_redir, O_WRONLY | O_CREAT | O_APPEND, 0644);
 		}
-		else{
-			int status;
-			waitpid(pid, &status, 0);
-		}
-		push_cmd(po);
+		dup2(fd, STDOUT_FILENO);
+		close(fd);
+		execvp(po->cmd_path, po->args);
+		fflush(stdout);
+		perror("exec failed");
+	}
+	else{
+		int status;
+		waitpid(pid, &status, 0);
+	}
+	push_cmd(po);
 }
 
 void copy_po(parse_object *dest, parse_object *src){
@@ -263,5 +280,63 @@ void copy_po(parse_object *dest, parse_object *src){
 	}
 	else {
 		dest->c_type = BUILT_IN;
+	}
+}
+
+void define_redir(parse_object *po){
+	int i, out_i, in_i;
+	out_i = in_i = 0;
+	for(i = 0; i < po->num_args; i++){
+		if(strcmp(po->args[i], ">") == 0 && po->args[i + 1] != NULL){
+			out_i = i;
+			po->out_redir = strdup(po->args[i + 1]);
+		}
+		if(strcmp(po->args[i], "<") == 0 && po->args[i + 1] != NULL){
+			in_i = i;
+			po->in_redir = strdup(po->args[i + 1]);
+		}
+	}
+	if(out_i > 0){
+		if(po->args[out_i + 2] == NULL){
+			free(po->args[out_i]);
+			free(po->args[out_i + 1]);
+			po->args[out_i] = NULL;
+		}
+		else {
+			int offset = out_i + 2;
+			free(po->args[out_i]);
+			free(po->args[out_i + 1]);
+			while (po->args[offset] != NULL) {
+				po->args[out_i++] = strdup(po->args[offset]);
+				free(po->args[offset++]);
+			}
+			po->args[out_i] = NULL;
+			
+		}
+	}
+	if(in_i > 0){
+		if(po->args[in_i + 2] == NULL){
+			free(po->args[in_i]);
+			free(po->args[in_i + 1]);
+			po->args[in_i] = NULL;
+		}
+		else {
+			int offset = in_i + 2;
+			free(po->args[in_i]);
+			free(po->args[in_i + 1]);
+			while (po->args[offset] != NULL) {
+				po->args[in_i++] = strdup(po->args[offset]);
+				free(po->args[offset++]);
+			}
+			po->args[in_i] = NULL;
+			
+		}
+	}
+
+	if(out_i > in_i && out_i > 0){
+		po->num_args = out_i;
+	}
+	else if(in_i > out_i && in_i > 0){
+		po->num_args = in_i;
 	}
 }
