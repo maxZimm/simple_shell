@@ -19,9 +19,18 @@ typedef struct{
 	char *out_redir;
 	char *in_redir;
 	int num_args;
+	int is_background;
 	enum cmd_type c_type;
 } parse_object;
 
+typedef struct bg_node{
+	int bg_pid;
+	int ordi;
+	struct bg_node *prev;
+	struct bg_node *next;
+} bg_node;
+
+bg_node bg_head = {0};
 
 parse_object *command_history[HIST_MAX];
 int last_cmd = 0;
@@ -38,6 +47,10 @@ void handle_system(parse_object *);
 void copy_po(parse_object *, parse_object *);
 void define_redir(parse_object *);
 
+// background job functions
+void define_bg(parse_object *);
+void add_bg(bg_node *);
+
 void print_prompt(void);
 
 
@@ -52,6 +65,10 @@ int main(void){
 
 	print_prompt();
 	while (fgets(line, LINE_MAX, stdin)) {
+		int stat, dead_pid;
+		while ((dead_pid = waitpid(-1, &stat, WNOHANG)) > 0) {
+			printf("%d process ended\n", dead_pid);
+		}
 		if(*line == '\n'){
 			print_prompt();
 			continue;
@@ -110,6 +127,7 @@ parse_object *parse_token(char *line){
 	output->num_args = count;
 	output->args[count] = NULL;
 	// send to a function to determine redirect? 
+	define_bg(output);
 	define_redir(output);
 	return output;
 }
@@ -214,6 +232,7 @@ void handle_builtin(parse_object *po){
 		return;
 	}		
 	else if(strcmp(po->command, "exit") == 0){
+		// If bg linked list has members clean them up 
 		exit(EXIT_SUCCESS);
 	}
 	else if(po->command[0] == '!'){
@@ -239,6 +258,11 @@ void handle_builtin(parse_object *po){
 		}
 		return;
 	}
+	else if (strcmp(po->command, "jobs") == 0){
+		if(bg_head.ordi == 0){
+			printf("No background jobs\n");
+		}
+	}
 	push_cmd(po);
 }
 
@@ -253,18 +277,38 @@ void handle_system(parse_object *po){
 			dup2(fdo, STDOUT_FILENO);
 			close(fdo);
 		}
+		// Redirect background job output to not affect parent process
+		else if(po->is_background == 1){
+			int dev_null = open("/dev/null", O_RDWR);
+			dup2(dev_null, STDOUT_FILENO);
+			close(dev_null);
+		}
 		if(po->in_redir != NULL){
 			fdi = open(po->in_redir, O_RDONLY);
 			dup2(fdi, STDIN_FILENO);
 			close(fdi);
 		}
+		else if (po->is_background) {
+			int dev_nul = open("/dev/null", O_RDWR);
+			dup2(dev_nul, STDIN_FILENO);
+			close(dev_nul);
+		}
+		
 		execvp(po->cmd_path, po->args);
 		fflush(stdout);
 		perror("exec failed");
 	}
 	else{
 		int status;
-		waitpid(pid, &status, 0);
+		if(po->is_background != 1){
+			waitpid(pid, &status, 0);
+		}
+		else{
+			// create node and attach it to list of background jobs
+			bg_node *bg_job = calloc(1, sizeof(bg_node));
+			bg_job->bg_pid = pid;
+			add_bg(bg_job);
+		}
 	}
 	push_cmd(po);
 }
@@ -353,5 +397,41 @@ void define_redir(parse_object *po){
 	}
 	else if(out_i > 0){
 		po->num_args = out_i;
+	}
+}
+
+void define_bg(parse_object *po){
+	// check args for & char at last index
+	if(strcmp(po->args[po->num_args - 1], "&") == 0){
+		po->is_background = 1;
+		po->num_args--;
+		free(po->args[po->num_args]);
+		po->args[po->num_args] = NULL;
+	}
+	else {
+		po->is_background = 0;
+	}
+}
+
+void add_bg(bg_node *bg){
+
+	if(bg_head.next == NULL){
+		bg_head.next = bg;
+		bg->prev = &bg_head;
+		bg->ordi = 1;
+		bg_head.ordi = 1;
+		return;
+	}
+	else{
+		bg_node *tmp;
+		tmp = bg_head.next;
+		while(tmp->next != NULL){
+			tmp = tmp->next;
+		}
+		bg->prev = tmp;
+		tmp->next = bg;
+		// use bg_head.ord to track num of nodes
+		bg_head.ordi++;
+		bg->ordi = bg_head.ordi;
 	}
 }
